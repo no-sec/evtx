@@ -4,11 +4,12 @@ use anyhow::{bail, format_err, Context, Result};
 use clap::{App, AppSettings, Arg, ArgMatches};
 use dialoguer::Confirm;
 use indoc::indoc;
+use regex::Regex;
 
 use encoding::all::encodings;
 use encoding::types::Encoding;
 use evtx::err::Result as EvtxResult;
-use evtx::{EvtxParser, ParserSettings, SerializedEvtxRecord};
+use evtx::{EvtxParser, ParserSettings, SerializedEvtxRecord, EvtxFilter};
 use log::Level;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
@@ -136,6 +137,14 @@ impl EvtxDump {
         };
 
         let sorted_output = matches.is_present("sorted_output");
+        let ids = match matches.values_of("filter-id") {
+            None => Vec::new(),
+            Some(i) => i.map(|s| s.parse::<u64>().expect("invalid id given")).collect(),
+        };
+
+        let data_regex = matches.value_of("filter-data").and_then(|d| {
+            Some(Regex::new(d).expect("invalid regular expression"))
+        });
 
         Ok(EvtxDump {
             parser_settings: ParserSettings::new()
@@ -143,7 +152,8 @@ impl EvtxDump {
                 .validate_checksums(validate_checksums)
                 .separate_json_attributes(separate_json_attrib_flag)
                 .indent(!no_indent)
-                .ansi_codec(*ansi_codec),
+                .ansi_codec(*ansi_codec)
+                .filter(EvtxFilter::new(ids, data_regex)),
             input,
             show_record_number: !no_show_record_number,
             output_format,
@@ -385,6 +395,29 @@ fn main() -> Result<()> {
             .short("-S").long("--sort")
             .takes_value(false)
             .help("sort output by record id")
+        )
+        .arg(Arg::with_name("filter-id")
+            .short("I").long("--filter-id")
+            .help("display only events with the given event ids. The value of this option must be a comma separated list")
+            .takes_value(true)
+            .use_delimiter(true)
+            .validator(|s| match s.parse::<u64>() {
+                Err(_)  => Err(String::from("EventID must be a number")),
+                _       => Ok(())
+            })
+        )
+        .arg(Arg::with_name("filter-data")
+            .short("D").long("--filter-data")
+            .help("filter event data based on a regular expression")
+            .takes_value(true)
+            .validator(|s| match Regex::new(&s){
+                Ok(_) => Ok(()),
+                Err(e) => match e {
+                    regex::Error::Syntax(s) => Err(String::from(s)),
+                    regex::Error::CompiledTooBig(_) => Err(String::from("regex needs too much memory")),
+                    _ => Err(String::from("unknown error"))
+                }
+            })
         )
         .get_matches();
 

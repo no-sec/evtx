@@ -3,6 +3,7 @@ use crate::err::{ChunkError, EvtxError, InputError, Result};
 use crate::evtx_chunk::EvtxChunkData;
 use crate::evtx_file_header::EvtxFileHeader;
 use crate::evtx_record::SerializedEvtxRecord;
+use crate::evtx_filter::EvtxFilter;
 #[cfg(feature = "multithreading")]
 use rayon::prelude::*;
 
@@ -136,6 +137,8 @@ pub struct ParserSettings {
     indent: bool,
     /// Controls the ansi codec used to deserialize ansi strings inside the xml document.
     ansi_codec: EncodingRef,
+    /// Used to filter the output. Filtering is already done while parsing, for performance reasons
+    evtx_filter: EvtxFilter,
 }
 
 impl Debug for ParserSettings {
@@ -168,6 +171,7 @@ impl Default for ParserSettings {
             separate_json_attributes: false,
             indent: true,
             ansi_codec: WINDOWS_1252,
+            evtx_filter: EvtxFilter::empty(),
         }
     }
 }
@@ -203,6 +207,13 @@ impl ParserSettings {
     pub fn ansi_codec(mut self, ansi_codec: EncodingRef) -> Self {
         self.ansi_codec = ansi_codec;
 
+        self
+    }
+
+    /// Sets the filter options
+    pub fn filter(mut self, filter: EvtxFilter) -> Self {
+        self.evtx_filter = filter;
+        
         self
     }
 
@@ -464,7 +475,11 @@ impl<T: ReadSeek> EvtxParser<T> {
                                     source: err,
                                 })],
                                 Ok(mut chunk_records) => {
-                                    chunk_records.iter().map(f.clone()).collect()
+                                    chunk_records
+                                        .iter()
+                                        .filter(|r| chunk_settings.evtx_filter.matches(r))
+                                        .map(f.clone())
+                                        .collect()
                                 }
                             }
                         }
